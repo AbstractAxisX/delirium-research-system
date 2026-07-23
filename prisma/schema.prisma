@@ -1,0 +1,207 @@
+// Prisma schema for Medical Research Data Collection System
+// Clinical trial: Olanzapine vs Haloperidol for Delirium (MDAS scoring)
+// NOTE: SQLite for local dev. In production, change provider to "mysql" and
+// set DATABASE_URL="mysql://user:pass@host:3306/db" in .env on Linux hosting.
+// All column types here are cross-compatible (String/Int/Boolean/DateTime).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// User (physician / admin)
+// ============================================================
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  fullName  String
+  phone     String?
+  role      String   @default("DOCTOR") // ADMIN | DOCTOR
+  active    Boolean  @default(true)
+  groupId   String?
+  // Comma-separated list of page keys this doctor is allowed to view
+  // (admins always have access to everything)
+  // e.g. "dashboard,new-patient,search-patient,all-patients"
+  pagePermissions String @default("dashboard,new-patient,search-patient,all-patients,patient-detail")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  group          Group?       @relation(fields: [groupId], references: [id])
+  patients       Patient[]
+  mdasScores     MdasScore[]
+  auditLogs      AuditLog[]
+}
+
+// ============================================================
+// Group — admin can create doctor groups with custom access
+// ============================================================
+model Group {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  color       String   @default("#0d9488")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users    User[]
+  patients Patient[]
+}
+
+// ============================================================
+// Patient
+// ============================================================
+model Patient {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  nationalId    String
+  fullName      String
+  gender        String?
+  age           Int?
+  phone         String?
+  address       String?
+
+  // Clinical baseline
+  date          String?
+  causeOfDelirium   String?
+  deliriumSubtype   String?
+  department        String?
+  drugAllergy       String?
+  reasonForAdmission String?
+  dementiaHistory   String?
+  admissionDate     String?
+  organFailure      String?
+
+  // Concomitant variables
+  admissionType     String?
+  opioidUse         String?
+  benzodiazepineUse String?
+  psychiatricDrugUse String?
+  painkillerUse     String?
+
+  // Treatment safety
+  qtcBefore         Int?
+  qtcAfter          Int?
+  eps               String?
+  sleepiness        String?
+  tremor            String?
+  muscleStiffness   String?
+
+  // Drug assignment (AUTO from national ID last digit)
+  drugType          String
+  drugDose          String?
+
+  // Clinical outcomes
+  hospitalStayDays  Int?
+  icuShiftCount     Int?
+  needExtraDose     Boolean @default(false)
+  earlyDischarge    Boolean @default(false)
+  deathBefore72h    Boolean @default(false)
+  relapse           Boolean @default(false)
+  icuAdmission      Boolean @default(false)
+  patientRefusal    Boolean @default(false)
+  severeSideEffect  Boolean @default(false)
+  physicalRestraint Boolean @default(false)
+
+  // Ownership & audit
+  createdById       String
+  groupId           String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  createdBy         User        @relation(fields: [createdById], references: [id])
+  group             Group?      @relation(fields: [groupId], references: [id])
+  mdasScores        MdasScore[]
+  auditLogs         AuditLog[]
+}
+
+// ============================================================
+// MDAS Score — real-time saved per-question with locking
+// ============================================================
+model MdasScore {
+  id          String    @id @default(cuid())
+  patientId   String
+  timePoint   String // BASELINE | H24 | H48
+  q1          Int?
+  q2          Int?
+  q3          Int?
+  q4          Int?
+  q5          Int?
+  q6          Int?
+  q7          Int?
+  q8          Int?
+  q9          Int?
+  q10         Int?
+  totalScore  Int?
+  // JSON map of answers for dynamically-managed items: {itemId: value}
+  // Used when admin adds custom questions beyond the original 10
+  answersJson String?
+  locked      Boolean   @default(false)
+  lockedAt    DateTime?
+  lastSavedAt DateTime?
+  submittedAt DateTime?
+  filledById  String?
+  filledAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  patient    Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  filledBy   User?    @relation(fields: [filledById], references: [id])
+
+  @@unique([patientId, timePoint])
+}
+
+// ============================================================
+// FormItem — admin-managed form questions (all categories)
+// ============================================================
+model FormItem {
+  id          String   @id @default(cuid())
+  key         String   @unique // field key: fullName, nationalId, q1, needExtraDose, ...
+  title       String
+  description String?
+  // Category: demographic | clinical | concomitant | safety | mdas | outcome
+  category    String   @default("mdas")
+  // Field type: text | number | radio | select | checkbox | date | textarea
+  fieldType   String   @default("radio")
+  // JSON array of options for radio/select: [{value,label}]
+  optionsJson String?
+  // Comma-separated time points: "BASELINE,H24,H48" or any subset
+  timePoints  String   @default("BASELINE")
+  order       Int      @default(0)
+  required    Boolean  @default(true)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ============================================================
+// Audit Log
+// ============================================================
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  patientId String?
+  action    String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id])
+  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+}
+
+// ============================================================
+// Department — admin-managed list of hospital departments
+// ============================================================
+model Department {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
