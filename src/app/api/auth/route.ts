@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       data: { userId: user.id, action: "LOGIN", detail: "ورود موفق" },
     });
     return NextResponse.json({ user: sessionUser });
-  } catch (e) {
+  } catch (e) { console.error("LOGIN ERROR:", e);
     return NextResponse.json(
       { error: "خطای سرور در ورود" },
       { status: 500 }

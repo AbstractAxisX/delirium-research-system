@@ -66,7 +66,7 @@ export async function setSessionCookie(user: SessionUser) {
     id: user.id, username: user.username, fullName: user.fullName, role: user.role,
   }), {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: false, // TEMP: set true once HTTPS is configured
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 7, // 7 days
