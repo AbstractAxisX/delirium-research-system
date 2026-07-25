@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
-          mdasScores: { select: { timePoint: true, totalScore: true, filledAt: true } },
+          mdasScores: { select: { timePoint: true, totalScore: true, filledAt: true, answersJson: true, q1: true } },
           createdBy: { select: { fullName: true, username: true } },
         },
       }),

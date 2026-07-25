@@ -15,6 +15,20 @@ import { toJalali, toPersianDigits } from "@/lib/persian";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { JalaliDatePicker } from "@/components/ui/jalali-date-picker";
 import { computeFollowUpStatus } from "@/lib/followup";
+
+// Helper: check if MDAS answers exist in answersJson
+function hasMdasAnswers(record: any): boolean {
+  if (!record) return false;
+  // Check answersJson
+  if (record.answersJson) {
+    try {
+      const ans = JSON.parse(record.answersJson);
+      if (Object.keys(ans).some(k => k.startsWith("q") && typeof ans[k] === "number")) return true;
+    } catch {}
+  }
+  // Fallback: check legacy q1 column
+  return record.q1 != null;
+}
 import { toast } from "sonner";
 
 type FollowUpFilter = "needs_24h" | "needs_48h" | "overdue" | "complete";
@@ -78,7 +92,10 @@ export function AllPatientsView() {
       const baseline = mdas.find((m: any) => m.timePoint === "BASELINE");
       const h24 = mdas.find((m: any) => m.timePoint === "H24");
       const h48 = mdas.find((m: any) => m.timePoint === "H48");
-      const info = computeFollowUpStatus(baseline?.filledAt, h24?.filledAt, h48?.filledAt, now);
+      const info = computeFollowUpStatus(
+        baseline?.filledAt, h24?.filledAt, h48?.filledAt, now,
+        hasMdasAnswers(h24), hasMdasAnswers(h48)
+      );
       return followUpFilters.includes(info.status as FollowUpFilter) ||
         (followUpFilters.includes("overdue") && (info.overdueHours || 0) > 0);
     });
@@ -189,7 +206,11 @@ export function AllPatientsView() {
                       const baseline = mdas.find((m: any) => m.timePoint === "BASELINE");
                       const h24 = mdas.find((m: any) => m.timePoint === "H24");
                       const h48 = mdas.find((m: any) => m.timePoint === "H48");
-                      const fu = computeFollowUpStatus(baseline?.filledAt, h24?.filledAt, h48?.filledAt);
+                      const fu = computeFollowUpStatus(
+                        baseline?.filledAt, h24?.filledAt, h48?.filledAt,
+                        new Date(),
+                        hasMdasAnswers(h24), hasMdasAnswers(h48)
+                      );
                       return (
                         <TableRow key={p.id} className="cursor-pointer hover:bg-accent/50" onClick={() => setActivePatient(p.id)}>
                           <TableCell className="font-mono text-xs font-semibold">{p.code}</TableCell>

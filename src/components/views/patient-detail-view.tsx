@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { DepartmentSelect } from "@/components/ui/department-select";
 import {
   ArrowRight, Loader2, Save, Activity, Pill,
   TrendingDown, TrendingUp, Minus, Printer,
@@ -462,11 +463,17 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
 function FormItemRenderer({ item, idx, value, canEdit, onChange }: any) {
   const options = item.options && item.options.length > 0 ? item.options : DEFAULT_OPTIONS;
 
-  // Get display label for a value
-  function valueLabel(v: any): string {
-    if (v === undefined || v === null || v === "") return "—";
-    const opt = options.find((o: any) => String(o.value) === String(v));
-    return opt ? opt.label : String(v);
+  // Department field — use DepartmentSelect
+  if (item.key === "department") {
+    return (
+      <div className="space-y-1" dir="rtl">
+        <Label className="text-xs font-medium">
+          {item.title}
+          {item.required && <span className="text-destructive mr-1">*</span>}
+        </Label>
+        <DepartmentSelect value={value || ""} onChange={onChange} placeholder="انتخاب بخش" disabled={!canEdit} />
+      </div>
+    );
   }
 
   // Radio options
