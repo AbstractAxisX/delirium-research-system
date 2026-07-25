@@ -171,6 +171,11 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
 
   // Load scores for selected timepoint
   useEffect(() => {
+    // CANCEL any pending save timer from previous timepoint
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
     currentTpRef.current = timePoint;
     // IMMEDIATELY clear ALL scores when switching timepoint
     setScores({});
@@ -234,7 +239,11 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
   // Save ALL answers (MDAS + safety + outcomes) to MdasScore.answersJson
   function scheduleAnswersSave(currentScores: Record<string, any>) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    // Capture timepoint at call time to prevent race condition
+    const tp = timePoint;
     saveTimer.current = setTimeout(async () => {
+      // Check if timepoint changed during debounce
+      if (currentTpRef.current !== tp) return;
       const answers: Record<string, any> = {};
       for (const item of items) {
         const v = currentScores[item.key];
@@ -248,7 +257,7 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
           method: "POST",
           body: JSON.stringify({
             patientId: patient.id,
-            timePoint,
+            timePoint: tp,
             answers,
           }),
         });
@@ -256,7 +265,7 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
       } catch (e: any) {
         toast.error(e.message || "خطا در ذخیره");
       }
-    }, 1000);
+    }, 800);
   }
 
   // Save BASELINE demographic fields to Patient record
@@ -334,6 +343,18 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
 
   return (
     <div className="space-y-3" dir="rtl">
+      {/* Drug info card */}
+      <div className="flex items-center justify-between p-3 rounded-lg border border-primary/20 bg-primary/5" dir="rtl">
+        <div>
+          <p className="text-[10px] text-muted-foreground">داروی تخصیص‌یافته:</p>
+          <p className="text-sm font-bold">{drugLabel(patient.drugType)}</p>
+        </div>
+        <div className="text-left">
+          <p className="text-[10px] text-muted-foreground">دوز:</p>
+          <p className="text-sm font-bold text-primary">{doseLabel(patient.drugDose) || "—"}</p>
+        </div>
+      </div>
+
       {/* Follow-up status badge */}
       <div className="flex items-center justify-center gap-2" dir="rtl">
         <Badge variant="outline" className={`text-xs px-3 py-1.5 ${
