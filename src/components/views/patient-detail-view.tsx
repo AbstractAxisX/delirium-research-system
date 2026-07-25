@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useApp } from "@/lib/store";
 import { api } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { TIME_POINTS, DEFAULT_OPTIONS, type TimePoint } from "@/lib/mdas";
 import { drugLabel, doseLabel, GENDERS, DELIRIUM_SUBTYPES, YES_NO, ADMISSION_TYPES } from "@/lib/options";
+import { recommendDrugDose } from "@/lib/mdas";
 import { toJalali, toJalaliDateTime, toPersianDigits } from "@/lib/persian";
 import { toast } from "sonner";
 import { computeFollowUpStatus } from "@/lib/followup";
@@ -197,10 +198,10 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
           }
           setMdasRecord(rec);
         }
-        // For BASELINE: also load demographic/clinical/concomitant from Patient record
+        // For BASELINE: also load demographic/clinical/concomitant/safety from Patient record
         if (timePoint === "BASELINE") {
           for (const item of items) {
-            if (["demographic", "clinical", "concomitant"].includes(item.category)) {
+            if (["demographic", "clinical", "concomitant", "safety"].includes(item.category)) {
               const val = (patient as any)[item.key];
               if (val !== null && val !== undefined && val !== "") {
                 loaded[item.key] = val;
@@ -235,11 +236,13 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
     setScores(next);
 
     // needExtraDoseDetail and other extra fields → save as answer
-    if (key === "needExtraDoseDetail" || (item && !["demographic", "clinical", "concomitant"].includes(item.category)) || (timePoint !== "BASELINE")) {
+    if (key === "needExtraDoseDetail") {
       scheduleAnswersSave(next);
-    } else if (timePoint === "BASELINE" && item && ["demographic", "clinical", "concomitant"].includes(item.category)) {
+    } else if (timePoint === "BASELINE" && item && ["demographic", "clinical", "concomitant", "safety"].includes(item.category)) {
+      // BASELINE: save demographic/clinical/concomitant/safety to Patient record
       scheduleFieldSave(key, value);
     } else {
+      // H24/H48: save everything to MdasScore.answersJson
       scheduleAnswersSave(next);
     }
   }
@@ -338,6 +341,12 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
   const mdasItems = items.filter((i) => i.category === "mdas");
   const mdasTotal = mdasItems.reduce((s, item) => s + (typeof scores[item.key] === "number" ? scores[item.key] : 0), 0);
 
+  // For H24/H48: compute recommended dose based on current MDAS score
+  const followupDose = useMemo(() => {
+    if (timePoint === "BASELINE" || mdasTotal === 0) return null;
+    return recommendDrugDose(mdasTotal, patient.drugType);
+  }, [mdasTotal, timePoint, patient.drugType]);
+
   // Follow-up status
   const mdasScores = patient.mdasScores || [];
   const baseline = mdasScores.find((m: any) => m.timePoint === "BASELINE");
@@ -413,6 +422,27 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
             {showCharts ? "پنهان تحلیل" : "نمایش تحلیل"}
             {showCharts ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           </Button>
+        </div>
+      )}
+
+      {/* Follow-up dose recommendation (H24/H48 only) */}
+      {followupDose && (
+        <div className="p-3 rounded-lg border border-primary/30 bg-primary/5" dir="rtl">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-muted-foreground">دوز پیشنهادی مجدد بر اساس نمره:</p>
+              <p className="text-lg font-bold text-primary">{followupDose.doseLabel}</p>
+            </div>
+            <div className="text-left">
+              <p className="text-[10px] text-muted-foreground">نمره: {toPersianDigits(mdasTotal)} (بازه {followupDose.range})</p>
+              <p className="text-[10px] text-muted-foreground">اگر نمره ≥ ۱۰ باشد، تکرار دارو توصیه می‌شود</p>
+            </div>
+          </div>
+        </div>
+      )}
+      {timePoint !== "BASELINE" && mdasTotal > 0 && mdasTotal < 10 && (
+        <div className="p-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5 text-xs text-center" dir="rtl">
+          نمره {toPersianDigits(mdasTotal)} — به درمان جواب داده، تکرار دارو لازم نیست ✓
         </div>
       )}
 
