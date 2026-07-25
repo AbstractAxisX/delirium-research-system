@@ -169,56 +169,39 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
       .catch(() => setLoading(false));
   }, [timePoint]);
 
-  // Load scores for selected timepoint — ONLY from /api/mdas
+  // Load scores for selected timepoint
   useEffect(() => {
     currentTpRef.current = timePoint;
-    // IMMEDIATELY clear scores when switching timepoint
+    // IMMEDIATELY clear ALL scores when switching timepoint
     setScores({});
     setMdasRecord(null);
 
+    // Load MDAS scores from /api/mdas (per-timepoint)
     api(`/api/mdas?patientId=${patient.id}`)
       .then((r: any) => {
-        // Only apply if still on the same timepoint
         if (currentTpRef.current !== timePoint) return;
         const rec = r.records.find((m: any) => m.timePoint === timePoint);
+        const loaded: Record<string, any> = {};
         if (rec) {
-          const loaded: Record<string, any> = {};
-          // Use answers map (primary source)
           if (rec.answers && Object.keys(rec.answers).length > 0) {
             for (const [k, v] of Object.entries(rec.answers)) {
               if (typeof v === "number") loaded[k] = v;
             }
           }
-          // Also load non-MDAS fields from patient record (safety, outcomes)
-          // These are stored on the Patient model, not MdasScore
-          setScores(loaded);
           setMdasRecord(rec);
         }
+        // Load non-MDAS fields from patient record (these are shared across timepoints)
+        for (const item of items) {
+          if (item.category === "mdas") continue;
+          const val = (patient as any)[item.key];
+          if (val !== null && val !== undefined && val !== "") {
+            loaded[item.key] = val;
+          }
+        }
+        setScores(loaded);
       })
       .catch(() => {});
-  }, [timePoint, patient.id]);
-
-  // Also load non-MDAS field values from patient record
-  useEffect(() => {
-    // For non-MDAS items, load values from patient object
-    const nonMdasScores: Record<string, any> = {};
-    for (const item of items) {
-      if (item.category === "mdas") continue;
-      const val = (patient as any)[item.key];
-      if (val !== null && val !== undefined && val !== "") {
-        nonMdasScores[item.key] = val;
-      }
-    }
-    // Merge with existing MDAS scores (don't overwrite)
-    setScores((prev) => {
-      const merged = { ...nonMdasScores };
-      // Only add MDAS scores from the /api/mdas load
-      for (const [k, v] of Object.entries(prev)) {
-        if (typeof v === "number") merged[k] = v;
-      }
-      return merged;
-    });
-  }, [items, patient]);
+  }, [timePoint, patient.id, items]);
 
   function setAnswer(key: string, value: any) {
     if (!canEdit) return;

@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 
-// PATCH /api/patients/[id]/outcomes — update clinical outcomes
-// Used in the 24h/48h follow-up visits
+// PATCH /api/patients/[id]/outcomes — update clinical outcomes + safety
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -15,27 +14,42 @@ export async function PATCH(
     const patient = await db.patient.findUnique({ where: { id } });
     if (!patient) return NextResponse.json({ error: "بیمار یافت نشد" }, { status: 404 });
 
-    // All clinical outcome + safety fields
     const data: any = {};
-    if (typeof body.hospitalStayDays === "number" || body.hospitalStayDays === null) {
-      data.hospitalStayDays = body.hospitalStayDays;
+
+    // Number fields
+    if (body.hospitalStayDays !== undefined) {
+      data.hospitalStayDays = typeof body.hospitalStayDays === "number" ? body.hospitalStayDays : null;
     }
-    if (typeof body.icuShiftCount === "number" || body.icuShiftCount === null) {
-      data.icuShiftCount = body.icuShiftCount;
+    if (body.icuShiftCount !== undefined) {
+      data.icuShiftCount = typeof body.icuShiftCount === "number" ? body.icuShiftCount : null;
     }
-    // Safety variables moved to follow-up visits
-    if (typeof body.qtcAfter === "number" || body.qtcAfter === null) {
-      data.qtcAfter = body.qtcAfter;
+    if (body.qtcAfter !== undefined) {
+      data.qtcAfter = typeof body.qtcAfter === "number" ? body.qtcAfter : null;
     }
-    for (const k of [
+
+    // Boolean fields — convert YES/NO/true/false to boolean
+    const boolFields = [
       "needExtraDose", "earlyDischarge", "deathBefore72h", "relapse",
       "icuAdmission", "patientRefusal", "severeSideEffect", "physicalRestraint",
-      "eps", "sleepiness", "tremor", "muscleStiffness",
-    ]) {
-      if (typeof body[k] === "boolean") data[k] = body[k];
-      // YES/NO string values for safety fields
-      if (typeof body[k] === "string" && (body[k] === "YES" || body[k] === "NO")) {
-        data[k] = body[k];
+    ];
+    for (const k of boolFields) {
+      if (k in body) {
+        const v = body[k];
+        if (typeof v === "boolean") data[k] = v;
+        else if (v === "YES" || v === "yes" || v === 1) data[k] = true;
+        else if (v === "NO" || v === "no" || v === 0) data[k] = false;
+        else data[k] = false;
+      }
+    }
+
+    // String YES/NO fields (safety)
+    const stringFields = ["eps", "sleepiness", "tremor", "muscleStiffness"];
+    for (const k of stringFields) {
+      if (k in body) {
+        const v = body[k];
+        if (typeof v === "string" && (v === "YES" || v === "NO")) data[k] = v;
+        else if (typeof v === "boolean") data[k] = v ? "YES" : "NO";
+        else if (v === null) data[k] = null;
       }
     }
 
