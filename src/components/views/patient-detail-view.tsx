@@ -176,26 +176,30 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
     setScores({});
     setMdasRecord(null);
 
-    // Load MDAS scores from /api/mdas (per-timepoint)
+    // Load from /api/mdas (per-timepoint answersJson)
     api(`/api/mdas?patientId=${patient.id}`)
       .then((r: any) => {
         if (currentTpRef.current !== timePoint) return;
         const rec = r.records.find((m: any) => m.timePoint === timePoint);
         const loaded: Record<string, any> = {};
         if (rec) {
+          // Load ALL answers from answersJson (MDAS + safety + outcomes)
           if (rec.answers && Object.keys(rec.answers).length > 0) {
             for (const [k, v] of Object.entries(rec.answers)) {
-              if (typeof v === "number") loaded[k] = v;
+              loaded[k] = v;
             }
           }
           setMdasRecord(rec);
         }
-        // Load non-MDAS fields from patient record (these are shared across timepoints)
-        for (const item of items) {
-          if (item.category === "mdas") continue;
-          const val = (patient as any)[item.key];
-          if (val !== null && val !== undefined && val !== "") {
-            loaded[item.key] = val;
+        // For BASELINE: also load demographic/clinical/concomitant from Patient record
+        if (timePoint === "BASELINE") {
+          for (const item of items) {
+            if (["demographic", "clinical", "concomitant"].includes(item.category)) {
+              const val = (patient as any)[item.key];
+              if (val !== null && val !== undefined && val !== "") {
+                loaded[item.key] = val;
+              }
+            }
           }
         }
         setScores(loaded);
@@ -205,43 +209,47 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
 
   function setAnswer(key: string, value: any) {
     if (!canEdit) return;
-    // For MDAS items, validate 0-3
     const item = items.find((i) => i.key === key);
+
+    // For MDAS items, validate 0-3
     if (item && item.category === "mdas") {
       const numVal = typeof value === "string" ? Number(value) : value;
       if (Number.isNaN(numVal) || numVal < 0 || numVal > 3) return;
       value = numVal;
     }
+
     const next = { ...scores, [key]: value };
     setScores(next);
 
-    // Auto-save MDAS answers
-    if (item && item.category === "mdas") {
-      scheduleMdasSave(next);
-    } else {
-      // Save non-MDAS fields to patient record
+    // Determine save strategy based on category and timepoint
+    if (timePoint === "BASELINE" && item && ["demographic", "clinical", "concomitant"].includes(item.category)) {
+      // BASELINE demographic/clinical: save to Patient record
       scheduleFieldSave(key, value);
+    } else {
+      // MDAS + safety + outcomes: save to MdasScore.answersJson (per-timepoint!)
+      scheduleAnswersSave(next);
     }
   }
 
-  function scheduleMdasSave(currentScores: Record<string, any>) {
+  // Save ALL answers (MDAS + safety + outcomes) to MdasScore.answersJson
+  function scheduleAnswersSave(currentScores: Record<string, any>) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      // Only save MDAS answers
-      const mdasAnswers: Record<string, number> = {};
+      const answers: Record<string, any> = {};
       for (const item of items) {
-        if (item.category === "mdas" && typeof currentScores[item.key] === "number") {
-          mdasAnswers[item.key] = currentScores[item.key];
+        const v = currentScores[item.key];
+        if (v !== undefined && v !== null && v !== "") {
+          answers[item.key] = v;
         }
       }
-      if (Object.keys(mdasAnswers).length === 0) return;
+      if (Object.keys(answers).length === 0) return;
       try {
         await api("/api/mdas", {
           method: "POST",
           body: JSON.stringify({
             patientId: patient.id,
             timePoint,
-            answers: mdasAnswers,
+            answers,
           }),
         });
         onSave();
@@ -251,16 +259,12 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
     }, 1000);
   }
 
+  // Save BASELINE demographic fields to Patient record
   async function scheduleFieldSave(key: string, value: any) {
-    // Save non-MDAS fields via patient PATCH or followup PATCH
     try {
-      const isFollowup = timePoint !== "BASELINE";
-      const endpoint = isFollowup
-        ? `/api/patients/${patient.id}/followup`
-        : `/api/patients/${patient.id}`;
-      await api(endpoint, {
+      await api(`/api/patients/${patient.id}`, {
         method: "PATCH",
-        body: JSON.stringify(isFollowup ? { timePoint, [key]: value } : { [key]: value }),
+        body: JSON.stringify({ [key]: value }),
       });
       onSave();
     } catch (e: any) {
@@ -269,21 +273,22 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
   }
 
   async function submitMdas() {
-    const mdasItems = items.filter((i) => i.category === "mdas");
-    const mdasAnswers: Record<string, number> = {};
-    for (const item of mdasItems) {
-      if (typeof scores[item.key] === "number") mdasAnswers[item.key] = scores[item.key];
+    // Collect ALL answers for this timepoint
+    const answers: Record<string, any> = {};
+    for (const item of items) {
+      const v = scores[item.key];
+      if (v !== undefined && v !== null && v !== "") {
+        // Validate required
+        if (item.required && (v === "" || v === undefined)) {
+          toast.error(`سؤال الزامی پر نشده: ${item.title.slice(0, 40)}`);
+          return;
+        }
+        answers[item.key] = v;
+      }
     }
-    if (Object.keys(mdasAnswers).length === 0) {
+    if (Object.keys(answers).length === 0) {
       toast.error("حداقل یک پاسخ ثبت کنید");
       return;
-    }
-    // Validate required items
-    for (const item of mdasItems) {
-      if (item.required && typeof scores[item.key] !== "number") {
-        toast.error(`سؤال الزامی پر نشده: ${item.title.slice(0, 40)}`);
-        return;
-      }
     }
     setSaving(true);
     try {
@@ -292,7 +297,7 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
         body: JSON.stringify({
           patientId: patient.id,
           timePoint,
-          answers: mdasAnswers,
+          answers,
           submit: true,
         }),
       });

@@ -42,12 +42,18 @@ export async function POST(req: NextRequest) {
     }
 
     // Collect answers - support both new {answers: {itemId: v}} and legacy q1..q10
-    const answersMap: Record<string, number> = {};
+    const answersMap: Record<string, any> = {};
     if (body.answers && typeof body.answers === "object") {
       for (const [k, v] of Object.entries(body.answers)) {
-        // Accept both number and string values (convert string to number)
-        const numVal = typeof v === "number" ? v : (typeof v === "string" ? Number(v) : NaN);
-        if (!Number.isNaN(numVal)) answersMap[k] = numVal;
+        // Accept numbers, strings, and booleans
+        if (typeof v === "number") answersMap[k] = v;
+        else if (typeof v === "string") {
+          // Try to convert to number (for MDAS)
+          const numVal = Number(v);
+          if (!Number.isNaN(numVal) && v !== "") answersMap[k] = numVal;
+          else answersMap[k] = v; // Keep as string (YES/NO etc.)
+        }
+        else if (typeof v === "boolean") answersMap[k] = v;
       }
     }
     // Legacy: also store q1..q10 if present
@@ -63,10 +69,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Compute total from all answers
-    const total = Object.keys(answersMap).length > 0
-      ? computeTotalFromAnswers(answersMap)
-      : (Object.keys(legacyScores).length > 0 ? computeMdasTotal(legacyScores) : null);
+    // Compute total from MDAS answers only (q1-q10, numbers only)
+    let total: number | null = null;
+    let mdasSum = 0;
+    let anyMdas = false;
+    for (const k of ["q1","q2","q3","q4","q5","q6","q7","q8","q9","q10"]) {
+      if (k in answersMap && typeof answersMap[k] === "number") {
+        mdasSum += answersMap[k];
+        anyMdas = true;
+      }
+    }
+    if (anyMdas) total = mdasSum;
 
     const now = new Date();
     const firstSaveAt = existing?.createdAt ?? now;
@@ -98,10 +111,9 @@ export async function POST(req: NextRequest) {
     };
     // Sync q1..q10 from answersMap so legacy fields stay correct per timepoint
     for (const k of ["q1","q2","q3","q4","q5","q6","q7","q8","q9","q10"]) {
-      if (k in answersMap) {
+      if (k in answersMap && typeof answersMap[k] === "number") {
         data[k] = answersMap[k];
       } else if (existing) {
-        // If answer was removed (not in new answers), clear it
         data[k] = null;
       }
     }
