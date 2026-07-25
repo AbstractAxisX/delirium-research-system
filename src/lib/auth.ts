@@ -66,7 +66,7 @@ export async function setSessionCookie(user: SessionUser) {
     id: user.id, username: user.username, fullName: user.fullName, role: user.role,
   }), {
     httpOnly: true,
-    secure: false, // TEMP: set true once HTTPS is configured
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 7, // 7 days
@@ -118,7 +118,16 @@ export function assignDrugFromNationalId(nationalId: string): {
  * Generate the next patient code: D001, D002, ...
  */
 export async function generateNextPatientCode(): Promise<string> {
-  const count = await db.patient.count();
-  const next = count + 1;
+  // Find the highest existing code number to avoid collisions after deletions
+  const patients = await db.patient.findMany({
+    select: { code: true },
+    orderBy: { code: "desc" },
+    take: 1,
+  });
+  let next = 1;
+  if (patients.length > 0 && patients[0].code) {
+    const match = patients[0].code.match(/D(\d+)/);
+    if (match) next = parseInt(match[1], 10) + 1;
+  }
   return `D${String(next).padStart(3, "0")}`;
 }

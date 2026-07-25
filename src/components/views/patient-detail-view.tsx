@@ -92,9 +92,30 @@ export function PatientDetailView() {
             </p>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={() => printPatientPDF(patient)} className="h-8">
-          <Printer className="h-3.5 w-3.5 ml-1" />چاپ
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => printPatientPDF(patient)} className="h-8">
+            <Printer className="h-3.5 w-3.5 ml-1" />چاپ
+          </Button>
+          {(me.role === "ADMIN" || patient.createdById === me.id) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                if (!confirm(`حذف بیمار «${patient.fullName}» (${patient.code})؟ این عمل قابل بازگشت نیست.`)) return;
+                try {
+                  await api(`/api/patients/${patient.id}`, { method: "DELETE" });
+                  toast.success("بیمار حذف شد");
+                  setView("all-patients");
+                } catch (e: any) {
+                  toast.error(e.message || "خطا در حذف");
+                }
+              }}
+              className="h-8 text-destructive border-destructive/30 hover:bg-destructive/5"
+            >
+              حذف بیمار
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Simple form — one page, time selector + all questions */}

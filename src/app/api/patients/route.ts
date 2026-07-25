@@ -6,6 +6,7 @@ import {
   generateNextPatientCode,
 } from "@/lib/auth";
 import { normalizeDigits, isValidNationalId } from "@/lib/persian";
+import { recommendDrugDose } from "@/lib/mdas";
 
 // GET /api/patients — list (admin: all, doctor: own)
 // query: search, drugType, department, fromDate, toDate, page, pageSize
@@ -99,6 +100,21 @@ export async function POST(req: NextRequest) {
     const { drugType } = assignDrugFromNationalId(nationalId);
     const code = await generateNextPatientCode();
 
+    // Compute MDAS total from answers
+    let mdasTotal = 0;
+    if (body.mdas && typeof body.mdas === "object") {
+      for (const v of Object.values(body.mdas)) {
+        if (typeof v === "number") mdasTotal += v;
+      }
+    }
+
+    // Auto-compute drug dose from MDAS total if not provided
+    let drugDose = body.drugDose || null;
+    if (!drugDose && mdasTotal > 0) {
+      const rec = recommendDrugDose(mdasTotal, drugType);
+      if (rec) drugDose = rec.dose;
+    }
+
     const data: any = {
       code,
       nationalId,
@@ -128,7 +144,7 @@ export async function POST(req: NextRequest) {
       tremor: body.tremor || null,
       muscleStiffness: body.muscleStiffness || null,
       drugType,
-      drugDose: body.drugDose || null,
+      drugDose: drugDose,
       hospitalStayDays: typeof body.hospitalStayDays === "number" ? body.hospitalStayDays : null,
       icuShiftCount: typeof body.icuShiftCount === "number" ? body.icuShiftCount : null,
       needExtraDose: !!body.needExtraDose,
