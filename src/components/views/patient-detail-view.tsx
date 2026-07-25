@@ -224,15 +224,22 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
       value = numVal;
     }
 
+    // For number fields, convert Persian digits
+    if (item && item.fieldType === "number" && typeof value === "string") {
+      const normalized = value.replace(/[۰-۹]/g, (d: string) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+                               .replace(/[٠-٩]/g, (d: string) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+      value = normalized ? Number(normalized) : "";
+    }
+
     const next = { ...scores, [key]: value };
     setScores(next);
 
-    // Determine save strategy based on category and timepoint
-    if (timePoint === "BASELINE" && item && ["demographic", "clinical", "concomitant"].includes(item.category)) {
-      // BASELINE demographic/clinical: save to Patient record
+    // needExtraDoseDetail and other extra fields → save as answer
+    if (key === "needExtraDoseDetail" || (item && !["demographic", "clinical", "concomitant"].includes(item.category)) || (timePoint !== "BASELINE")) {
+      scheduleAnswersSave(next);
+    } else if (timePoint === "BASELINE" && item && ["demographic", "clinical", "concomitant"].includes(item.category)) {
       scheduleFieldSave(key, value);
     } else {
-      // MDAS + safety + outcomes: save to MdasScore.answersJson (per-timepoint!)
       scheduleAnswersSave(next);
     }
   }
@@ -434,6 +441,7 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
                   value={scores[item.key]}
                   canEdit={canEdit}
                   onChange={(v) => setAnswer(item.key, v)}
+                  allScores={scores}
                 />
               ))}
             </CardContent>
@@ -460,7 +468,7 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
 // ============================================================
 // FormItemRenderer — render a single form item based on type
 // ============================================================
-function FormItemRenderer({ item, idx, value, canEdit, onChange }: any) {
+function FormItemRenderer({ item, idx, value, canEdit, onChange, allScores }: any) {
   const options = item.options && item.options.length > 0 ? item.options : DEFAULT_OPTIONS;
 
   // Department field — use DepartmentSelect
@@ -519,24 +527,38 @@ function FormItemRenderer({ item, idx, value, canEdit, onChange }: any) {
   if (item.fieldType === "checkbox") {
     const checked = !!value;
     return (
-      <label
-        className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all text-sm min-h-[44px] touch-manipulation ${
-          checked ? "border-rose-500/40 bg-rose-500/5" : "border-border hover:bg-accent"
-        } ${!canEdit ? "opacity-70 cursor-not-allowed" : ""}`}
-        dir="rtl"
-      >
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-          disabled={!canEdit}
-          className="w-5 h-5 accent-rose-500 shrink-0"
-        />
-        <span className={checked ? "text-rose-700 dark:text-rose-300 font-medium" : ""}>
-          {item.required && <span className="text-destructive ml-1">*</span>}
-          {item.title}
-        </span>
-      </label>
+      <div className="space-y-1.5" dir="rtl">
+        <label
+          className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all text-sm min-h-[44px] touch-manipulation ${
+            checked ? "border-rose-500/40 bg-rose-500/5" : "border-border hover:bg-accent"
+          } ${!canEdit ? "opacity-70 cursor-not-allowed" : ""}`}
+          dir="rtl"
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => onChange(e.target.checked)}
+            disabled={!canEdit}
+            className="w-5 h-5 accent-rose-500 shrink-0"
+          />
+          <span className={checked ? "text-rose-700 dark:text-rose-300 font-medium" : ""}>
+            {item.required && <span className="text-destructive ml-1">*</span>}
+            {item.title}
+          </span>
+        </label>
+        {/* Show text box when needExtraDose is checked */}
+        {item.key === "needExtraDose" && checked && (
+          <Input
+            type="text"
+            value={allScores?.needExtraDoseDetail || ""}
+            onChange={(e) => onChange("needExtraDoseDetail", e.target.value)}
+            placeholder="نام دارو و دوز اضافی را بنویسید..."
+            disabled={!canEdit}
+            className="min-h-[44px] text-sm"
+            dir="rtl"
+          />
+        )}
+      </div>
     );
   }
 

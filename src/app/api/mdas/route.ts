@@ -27,19 +27,10 @@ export async function POST(req: NextRequest) {
     });
 
     if (existing && existing.locked && !isAdmin) {
-      return NextResponse.json({ error: "این فرم قفل شده است. برای ویرایش با مدیر سامانه تماس بگیرید.", locked: true }, { status: 403 });
+      return NextResponse.json({ error: "این فرم ثبت نهایی شده. برای ویرایش با مدیر تماس بگیرید.", locked: true }, { status: 403 });
     }
 
-    if (existing && existing.lastSavedAt && !isAdmin && !submit) {
-      const elapsed = Date.now() - existing.lastSavedAt.getTime();
-      if (elapsed > AUTO_LOCK_MS) {
-        await db.mdasScore.update({
-          where: { id: existing.id },
-          data: { locked: true, lockedAt: new Date() },
-        });
-        return NextResponse.json({ error: "زمان ویرایش به پایان رسیده است (۶۰ ثانیه). فرم قفل شد.", locked: true }, { status: 403 });
-      }
-    }
+    // NOTE: Auto-lock after 60s REMOVED — doctors can edit freely until they click "submit"
 
     // Collect answers - support both new {answers: {itemId: v}} and legacy q1..q10
     const answersMap: Record<string, any> = {};
