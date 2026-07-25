@@ -72,8 +72,39 @@ export async function PATCH(
       "fullName",
     ];
     const data: any = {};
+    // Boolean fields that need conversion from YES/NO/true/false
+    const boolFields = [
+      "needExtraDose", "earlyDischarge", "deathBefore72h", "relapse",
+      "icuAdmission", "patientRefusal", "severeSideEffect", "physicalRestraint",
+    ];
+    // String YES/NO fields
+    const yesNoFields = ["eps", "sleepiness", "tremor", "muscleStiffness"];
     for (const key of allowed) {
-      if (key in body) data[key] = body[key];
+      if (key in body) {
+        const v = body[key];
+        if (boolFields.includes(key)) {
+          // Convert to boolean
+          if (typeof v === "boolean") data[key] = v;
+          else if (v === "YES" || v === "yes" || v === 1) data[key] = true;
+          else if (v === "NO" || v === "no" || v === 0) data[key] = false;
+          else data[key] = !!v;
+        } else if (yesNoFields.includes(key)) {
+          // Keep as string YES/NO
+          if (typeof v === "boolean") data[key] = v ? "YES" : "NO";
+          else if (v === "YES" || v === "NO") data[key] = v;
+          else if (v === null) data[key] = null;
+        } else if (key === "age" || key === "qtcBefore" || key === "qtcAfter" || key === "hospitalStayDays" || key === "icuShiftCount") {
+          // Number fields
+          if (v === null || v === "") data[key] = null;
+          else if (typeof v === "number") data[key] = v;
+          else data[key] = Number(v) || null;
+        } else {
+          data[key] = v;
+        }
+      }
+    }
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ error: "هیچ فیلدی برای ویرایش ارسال نشد" }, { status: 400 });
     }
     const updated = await db.patient.update({ where: { id }, data });
     await db.auditLog.create({
