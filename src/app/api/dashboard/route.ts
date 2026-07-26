@@ -29,14 +29,14 @@ export async function GET() {
       db.patient.findMany({
         where, orderBy: { createdAt: "desc" }, take: 8,
         include: {
-          mdasScores: { select: { timePoint: true, totalScore: true, filledAt: true, answersJson: true, q1: true } },
+          mdasScores: { select: { timePoint: true, totalScore: true, filledAt: true } },
           createdBy: { select: { fullName: true } },
         },
       }),
       db.patient.findMany({
         where,
         include: {
-          mdasScores: { select: { timePoint: true, totalScore: true, filledAt: true, answersJson: true, q1: true } },
+          mdasScores: { select: { timePoint: true, totalScore: true, filledAt: true } },
           createdBy: { select: { fullName: true } },
         },
       }),
@@ -54,23 +54,7 @@ export async function GET() {
       const baseline = p.mdasScores.find((m) => m.timePoint === "BASELINE");
       const h24 = p.mdasScores.find((m) => m.timePoint === "H24");
       const h48 = p.mdasScores.find((m) => m.timePoint === "H48");
-      // Check if MDAS answers (q1-q10) actually exist for H24/H48
-      const h24HasMdas = h24 ? (() => {
-        try {
-          const ans = h24.answersJson ? JSON.parse(h24.answersJson) : {};
-          if (Object.keys(ans).some(k => k.startsWith("q") && typeof ans[k] === "number")) return true;
-          // Fallback: check legacy q1-q10 columns
-          return (h24 as any).q1 != null;
-        } catch { return false; }
-      })() : false;
-      const h48HasMdas = h48 ? (() => {
-        try {
-          const ans = h48.answersJson ? JSON.parse(h48.answersJson) : {};
-          if (Object.keys(ans).some(k => k.startsWith("q") && typeof ans[k] === "number")) return true;
-          return (h48 as any).q1 != null;
-        } catch { return false; }
-      })() : false;
-      const info = computeFollowUpStatus(baseline?.filledAt, h24?.filledAt, h48?.filledAt, now, h24HasMdas, h48HasMdas);
+      const info = computeFollowUpStatus(baseline?.filledAt, h24?.filledAt, h48?.filledAt, now);
       (p as any).followUp = info;
       if (info.status === "needs_24h") needs24h.push(p);
       else if (info.status === "needs_48h") needs48h.push(p);
@@ -106,13 +90,7 @@ export async function GET() {
         const baseline = p.mdasScores.find((m) => m.timePoint === "BASELINE");
         const h24 = p.mdasScores.find((m) => m.timePoint === "H24");
         const h48 = p.mdasScores.find((m) => m.timePoint === "H48");
-        const h24HasMdas = h24 ? (() => {
-          try { const a = h24.answersJson ? JSON.parse(h24.answersJson) : {}; return Object.keys(a).some(k => k.startsWith("q") && typeof a[k] === "number") || (h24 as any).q1 != null; } catch { return false; }
-        })() : false;
-        const h48HasMdas = h48 ? (() => {
-          try { const a = h48.answersJson ? JSON.parse(h48.answersJson) : {}; return Object.keys(a).some(k => k.startsWith("q") && typeof a[k] === "number") || (h48 as any).q1 != null; } catch { return false; }
-        })() : false;
-        return { ...p, followUp: computeFollowUpStatus(baseline?.filledAt, h24?.filledAt, h48?.filledAt, now, h24HasMdas, h48HasMdas) };
+        return { ...p, followUp: computeFollowUpStatus(baseline?.filledAt, h24?.filledAt, h48?.filledAt, now) };
       }),
       followUpNeeded,
       counts: {

@@ -47,14 +47,17 @@ export async function getSession(): Promise<SessionUser | null> {
       select: { id: true, username: true, fullName: true, role: true, pagePermissions: true, active: true },
     });
     if (!u || !u.active) return null;
+    // Defensive: handle missing pagePermissions column gracefully
+    const perms = u.pagePermissions || "";
     return {
       id: u.id,
       username: u.username,
       fullName: u.fullName,
       role: u.role as "ADMIN" | "DOCTOR",
-      pagePermissions: u.role === "ADMIN" ? undefined : u.pagePermissions.split(",").filter(Boolean),
+      pagePermissions: u.role === "ADMIN" ? undefined : perms.split(",").filter(Boolean),
     };
   } catch {
+    // If DB query fails (e.g., missing column), fall back to JWT data
     return decoded;
   }
 }
@@ -118,16 +121,7 @@ export function assignDrugFromNationalId(nationalId: string): {
  * Generate the next patient code: D001, D002, ...
  */
 export async function generateNextPatientCode(): Promise<string> {
-  // Find the highest existing code number to avoid collisions after deletions
-  const patients = await db.patient.findMany({
-    select: { code: true },
-    orderBy: { code: "desc" },
-    take: 1,
-  });
-  let next = 1;
-  if (patients.length > 0 && patients[0].code) {
-    const match = patients[0].code.match(/D(\d+)/);
-    if (match) next = parseInt(match[1], 10) + 1;
-  }
+  const count = await db.patient.count();
+  const next = count + 1;
   return `D${String(next).padStart(3, "0")}`;
 }

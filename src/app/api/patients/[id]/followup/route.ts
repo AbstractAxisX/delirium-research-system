@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 
 // PATCH /api/patients/[id]/followup — update follow-up fields (safety + outcomes)
 // Body: { timePoint: "H24"|"H48", ...fields }
+// Stores non-MDAS fields that apply to H24/H48 visits
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -15,42 +16,24 @@ export async function PATCH(
     const patient = await db.patient.findUnique({ where: { id } });
     if (!patient) return NextResponse.json({ error: "بیمار یافت نشد" }, { status: 404 });
 
+    // All follow-up fields (safety + outcomes)
     const data: any = {};
-
-    // Boolean fields (outcomes) — convert "YES"/"NO"/true/false to boolean
-    const boolFields = [
+    const allowedFields = [
+      // Safety (H24/H48)
+      "qtcAfter", "eps", "sleepiness", "tremor", "muscleStiffness",
+      // Outcomes (H24/H48)
+      "hospitalStayDays", "icuShiftCount",
       "needExtraDose", "earlyDischarge", "deathBefore72h", "relapse",
       "icuAdmission", "patientRefusal", "severeSideEffect", "physicalRestraint",
     ];
-    for (const k of boolFields) {
+
+    for (const k of allowedFields) {
       if (k in body) {
         const v = body[k];
         if (typeof v === "boolean") data[k] = v;
-        else if (v === "YES" || v === "yes" || v === "true" || v === 1) data[k] = true;
-        else if (v === "NO" || v === "no" || v === "false" || v === 0) data[k] = false;
-        else if (v === null) data[k] = false;
-      }
-    }
-
-    // String fields (safety YES/NO)
-    const stringFields = ["eps", "sleepiness", "tremor", "muscleStiffness"];
-    for (const k of stringFields) {
-      if (k in body) {
-        const v = body[k];
-        if (typeof v === "string" && (v === "YES" || v === "NO")) data[k] = v;
-        else if (typeof v === "boolean") data[k] = v ? "YES" : "NO";
+        else if (typeof v === "number") data[k] = v;
+        else if (typeof v === "string" && (v === "YES" || v === "NO")) data[k] = v;
         else if (v === null) data[k] = null;
-      }
-    }
-
-    // Number fields
-    const numberFields = ["qtcAfter", "hospitalStayDays", "icuShiftCount"];
-    for (const k of numberFields) {
-      if (k in body) {
-        const v = body[k];
-        if (typeof v === "number") data[k] = v;
-        else if (typeof v === "string" && v !== "") data[k] = Number(v);
-        else if (v === null || v === "") data[k] = null;
       }
     }
 

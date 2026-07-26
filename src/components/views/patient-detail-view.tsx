@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useApp } from "@/lib/store";
 import { api } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { DepartmentSelect } from "@/components/ui/department-select";
 import {
   ArrowRight, Loader2, Save, Activity, Pill,
   TrendingDown, TrendingUp, Minus, Printer,
@@ -18,7 +17,6 @@ import {
 } from "lucide-react";
 import { TIME_POINTS, DEFAULT_OPTIONS, type TimePoint } from "@/lib/mdas";
 import { drugLabel, doseLabel, GENDERS, DELIRIUM_SUBTYPES, YES_NO, ADMISSION_TYPES } from "@/lib/options";
-import { recommendDrugDose } from "@/lib/mdas";
 import { toJalali, toJalaliDateTime, toPersianDigits } from "@/lib/persian";
 import { toast } from "sonner";
 import { computeFollowUpStatus } from "@/lib/followup";
@@ -94,30 +92,9 @@ export function PatientDetailView() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => printPatientPDF(patient)} className="h-8">
-            <Printer className="h-3.5 w-3.5 ml-1" />چاپ
-          </Button>
-          {(me.role === "ADMIN" || patient.createdById === me.id) && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                if (!confirm(`حذف بیمار «${patient.fullName}» (${patient.code})؟ این عمل قابل بازگشت نیست.`)) return;
-                try {
-                  await api(`/api/patients/${patient.id}`, { method: "DELETE" });
-                  toast.success("بیمار حذف شد");
-                  setView("all-patients");
-                } catch (e: any) {
-                  toast.error(e.message || "خطا در حذف");
-                }
-              }}
-              className="h-8 text-destructive border-destructive/30 hover:bg-destructive/5"
-            >
-              حذف بیمار
-            </Button>
-          )}
-        </div>
+        <Button variant="outline" size="sm" onClick={() => printPatientPDF(patient)} className="h-8">
+          <Printer className="h-3.5 w-3.5 ml-1" />چاپ
+        </Button>
       </div>
 
       {/* Simple form — one page, time selector + all questions */}
@@ -171,120 +148,115 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
       .catch(() => setLoading(false));
   }, [timePoint]);
 
-  // Load scores for selected timepoint
+  // Load scores for selected timepoint — ONLY from /api/mdas
   useEffect(() => {
-    // CANCEL any pending save timer from previous timepoint
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
     currentTpRef.current = timePoint;
-    // IMMEDIATELY clear ALL scores when switching timepoint
+    // IMMEDIATELY clear scores when switching timepoint
     setScores({});
     setMdasRecord(null);
 
-    // Load from /api/mdas (per-timepoint answersJson)
     api(`/api/mdas?patientId=${patient.id}`)
       .then((r: any) => {
+        // Only apply if still on the same timepoint
         if (currentTpRef.current !== timePoint) return;
         const rec = r.records.find((m: any) => m.timePoint === timePoint);
-        const loaded: Record<string, any> = {};
         if (rec) {
-          // Load ALL answers from answersJson (MDAS + safety + outcomes)
+          const loaded: Record<string, any> = {};
+          // Use answers map (primary source)
           if (rec.answers && Object.keys(rec.answers).length > 0) {
             for (const [k, v] of Object.entries(rec.answers)) {
-              loaded[k] = v;
+              if (typeof v === "number") loaded[k] = v;
             }
           }
+          // Also load non-MDAS fields from patient record (safety, outcomes)
+          // These are stored on the Patient model, not MdasScore
+          setScores(loaded);
           setMdasRecord(rec);
         }
-        // For BASELINE: also load demographic/clinical/concomitant/safety from Patient record
-        if (timePoint === "BASELINE") {
-          for (const item of items) {
-            if (["demographic", "clinical", "concomitant", "safety"].includes(item.category)) {
-              const val = (patient as any)[item.key];
-              if (val !== null && val !== undefined && val !== "") {
-                loaded[item.key] = val;
-              }
-            }
-          }
-        }
-        setScores(loaded);
       })
       .catch(() => {});
-  }, [timePoint, patient.id, items]);
+  }, [timePoint, patient.id]);
+
+  // Also load non-MDAS field values from patient record
+  useEffect(() => {
+    // For non-MDAS items, load values from patient object
+    const nonMdasScores: Record<string, any> = {};
+    for (const item of items) {
+      if (item.category === "mdas") continue;
+      const val = (patient as any)[item.key];
+      if (val !== null && val !== undefined && val !== "") {
+        nonMdasScores[item.key] = val;
+      }
+    }
+    // Merge with existing MDAS scores (don't overwrite)
+    setScores((prev) => {
+      const merged = { ...nonMdasScores };
+      // Only add MDAS scores from the /api/mdas load
+      for (const [k, v] of Object.entries(prev)) {
+        if (typeof v === "number") merged[k] = v;
+      }
+      return merged;
+    });
+  }, [items, patient]);
 
   function setAnswer(key: string, value: any) {
     if (!canEdit) return;
-    const item = items.find((i) => i.key === key);
-
     // For MDAS items, validate 0-3
+    const item = items.find((i) => i.key === key);
     if (item && item.category === "mdas") {
       const numVal = typeof value === "string" ? Number(value) : value;
       if (Number.isNaN(numVal) || numVal < 0 || numVal > 3) return;
       value = numVal;
     }
-
-    // For number fields, convert Persian digits
-    if (item && item.fieldType === "number" && typeof value === "string") {
-      const normalized = value.replace(/[۰-۹]/g, (d: string) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
-                               .replace(/[٠-٩]/g, (d: string) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
-      value = normalized ? Number(normalized) : "";
-    }
-
     const next = { ...scores, [key]: value };
     setScores(next);
 
-    // needExtraDoseDetail and other extra fields → save as answer
-    if (key === "needExtraDoseDetail") {
-      scheduleAnswersSave(next);
-    } else if (timePoint === "BASELINE" && item && ["demographic", "clinical", "concomitant", "safety"].includes(item.category)) {
-      // BASELINE: save demographic/clinical/concomitant/safety to Patient record
-      scheduleFieldSave(key, value);
+    // Auto-save MDAS answers
+    if (item && item.category === "mdas") {
+      scheduleMdasSave(next);
     } else {
-      // H24/H48: save everything to MdasScore.answersJson
-      scheduleAnswersSave(next);
+      // Save non-MDAS fields to patient record
+      scheduleFieldSave(key, value);
     }
   }
 
-  // Save ALL answers (MDAS + safety + outcomes) to MdasScore.answersJson
-  function scheduleAnswersSave(currentScores: Record<string, any>) {
+  function scheduleMdasSave(currentScores: Record<string, any>) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    // Capture timepoint at call time to prevent race condition
-    const tp = timePoint;
     saveTimer.current = setTimeout(async () => {
-      // Check if timepoint changed during debounce
-      if (currentTpRef.current !== tp) return;
-      const answers: Record<string, any> = {};
+      // Only save MDAS answers
+      const mdasAnswers: Record<string, number> = {};
       for (const item of items) {
-        const v = currentScores[item.key];
-        if (v !== undefined && v !== null && v !== "") {
-          answers[item.key] = v;
+        if (item.category === "mdas" && typeof currentScores[item.key] === "number") {
+          mdasAnswers[item.key] = currentScores[item.key];
         }
       }
-      if (Object.keys(answers).length === 0) return;
+      if (Object.keys(mdasAnswers).length === 0) return;
       try {
         await api("/api/mdas", {
           method: "POST",
           body: JSON.stringify({
             patientId: patient.id,
-            timePoint: tp,
-            answers,
+            timePoint,
+            answers: mdasAnswers,
           }),
         });
         onSave();
       } catch (e: any) {
         toast.error(e.message || "خطا در ذخیره");
       }
-    }, 800);
+    }, 1000);
   }
 
-  // Save BASELINE demographic fields to Patient record
   async function scheduleFieldSave(key: string, value: any) {
+    // Save non-MDAS fields via patient PATCH or followup PATCH
     try {
-      await api(`/api/patients/${patient.id}`, {
+      const isFollowup = timePoint !== "BASELINE";
+      const endpoint = isFollowup
+        ? `/api/patients/${patient.id}/followup`
+        : `/api/patients/${patient.id}`;
+      await api(endpoint, {
         method: "PATCH",
-        body: JSON.stringify({ [key]: value }),
+        body: JSON.stringify(isFollowup ? { timePoint, [key]: value } : { [key]: value }),
       });
       onSave();
     } catch (e: any) {
@@ -293,22 +265,21 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
   }
 
   async function submitMdas() {
-    // Collect ALL answers for this timepoint
-    const answers: Record<string, any> = {};
-    for (const item of items) {
-      const v = scores[item.key];
-      if (v !== undefined && v !== null && v !== "") {
-        // Validate required
-        if (item.required && (v === "" || v === undefined)) {
-          toast.error(`سؤال الزامی پر نشده: ${item.title.slice(0, 40)}`);
-          return;
-        }
-        answers[item.key] = v;
-      }
+    const mdasItems = items.filter((i) => i.category === "mdas");
+    const mdasAnswers: Record<string, number> = {};
+    for (const item of mdasItems) {
+      if (typeof scores[item.key] === "number") mdasAnswers[item.key] = scores[item.key];
     }
-    if (Object.keys(answers).length === 0) {
+    if (Object.keys(mdasAnswers).length === 0) {
       toast.error("حداقل یک پاسخ ثبت کنید");
       return;
+    }
+    // Validate required items
+    for (const item of mdasItems) {
+      if (item.required && typeof scores[item.key] !== "number") {
+        toast.error(`سؤال الزامی پر نشده: ${item.title.slice(0, 40)}`);
+        return;
+      }
     }
     setSaving(true);
     try {
@@ -317,7 +288,7 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
         body: JSON.stringify({
           patientId: patient.id,
           timePoint,
-          answers,
+          answers: mdasAnswers,
           submit: true,
         }),
       });
@@ -341,12 +312,6 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
   const mdasItems = items.filter((i) => i.category === "mdas");
   const mdasTotal = mdasItems.reduce((s, item) => s + (typeof scores[item.key] === "number" ? scores[item.key] : 0), 0);
 
-  // For H24/H48: compute recommended dose based on current MDAS score
-  const followupDose = useMemo(() => {
-    if (timePoint === "BASELINE" || mdasTotal === 0) return null;
-    return recommendDrugDose(mdasTotal, patient.drugType);
-  }, [mdasTotal, timePoint, patient.drugType]);
-
   // Follow-up status
   const mdasScores = patient.mdasScores || [];
   const baseline = mdasScores.find((m: any) => m.timePoint === "BASELINE");
@@ -360,18 +325,6 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
 
   return (
     <div className="space-y-3" dir="rtl">
-      {/* Drug info card */}
-      <div className="flex items-center justify-between p-3 rounded-lg border border-primary/20 bg-primary/5" dir="rtl">
-        <div>
-          <p className="text-[10px] text-muted-foreground">داروی تخصیص‌یافته:</p>
-          <p className="text-sm font-bold">{drugLabel(patient.drugType)}</p>
-        </div>
-        <div className="text-left">
-          <p className="text-[10px] text-muted-foreground">دوز:</p>
-          <p className="text-sm font-bold text-primary">{doseLabel(patient.drugDose) || "—"}</p>
-        </div>
-      </div>
-
       {/* Follow-up status badge */}
       <div className="flex items-center justify-center gap-2" dir="rtl">
         <Badge variant="outline" className={`text-xs px-3 py-1.5 ${
@@ -425,27 +378,6 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
         </div>
       )}
 
-      {/* Follow-up dose recommendation (H24/H48 only) */}
-      {followupDose && (
-        <div className="p-3 rounded-lg border border-primary/30 bg-primary/5" dir="rtl">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs text-muted-foreground">دوز پیشنهادی مجدد بر اساس نمره:</p>
-              <p className="text-lg font-bold text-primary">{followupDose.doseLabel}</p>
-            </div>
-            <div className="text-left">
-              <p className="text-[10px] text-muted-foreground">نمره: {toPersianDigits(mdasTotal)} (بازه {followupDose.range})</p>
-              <p className="text-[10px] text-muted-foreground">اگر نمره ≥ ۱۰ باشد، تکرار دارو توصیه می‌شود</p>
-            </div>
-          </div>
-        </div>
-      )}
-      {timePoint !== "BASELINE" && mdasTotal > 0 && mdasTotal < 10 && (
-        <div className="p-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5 text-xs text-center" dir="rtl">
-          نمره {toPersianDigits(mdasTotal)} — به درمان جواب داده، تکرار دارو لازم نیست ✓
-        </div>
-      )}
-
       {/* Charts (collapsible) */}
       {showCharts && <PatientCharts patient={patient} />}
 
@@ -471,7 +403,6 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
                   value={scores[item.key]}
                   canEdit={canEdit}
                   onChange={(v) => setAnswer(item.key, v)}
-                  allScores={scores}
                 />
               ))}
             </CardContent>
@@ -498,20 +429,14 @@ function SimplePatientForm({ patient, canEdit, me, onSave }: any) {
 // ============================================================
 // FormItemRenderer — render a single form item based on type
 // ============================================================
-function FormItemRenderer({ item, idx, value, canEdit, onChange, allScores }: any) {
+function FormItemRenderer({ item, idx, value, canEdit, onChange }: any) {
   const options = item.options && item.options.length > 0 ? item.options : DEFAULT_OPTIONS;
 
-  // Department field — use DepartmentSelect
-  if (item.key === "department") {
-    return (
-      <div className="space-y-1" dir="rtl">
-        <Label className="text-xs font-medium">
-          {item.title}
-          {item.required && <span className="text-destructive mr-1">*</span>}
-        </Label>
-        <DepartmentSelect value={value || ""} onChange={onChange} placeholder="انتخاب بخش" disabled={!canEdit} />
-      </div>
-    );
+  // Get display label for a value
+  function valueLabel(v: any): string {
+    if (v === undefined || v === null || v === "") return "—";
+    const opt = options.find((o: any) => String(o.value) === String(v));
+    return opt ? opt.label : String(v);
   }
 
   // Radio options
@@ -557,38 +482,24 @@ function FormItemRenderer({ item, idx, value, canEdit, onChange, allScores }: an
   if (item.fieldType === "checkbox") {
     const checked = !!value;
     return (
-      <div className="space-y-1.5" dir="rtl">
-        <label
-          className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all text-sm min-h-[44px] touch-manipulation ${
-            checked ? "border-rose-500/40 bg-rose-500/5" : "border-border hover:bg-accent"
-          } ${!canEdit ? "opacity-70 cursor-not-allowed" : ""}`}
-          dir="rtl"
-        >
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={(e) => onChange(e.target.checked)}
-            disabled={!canEdit}
-            className="w-5 h-5 accent-rose-500 shrink-0"
-          />
-          <span className={checked ? "text-rose-700 dark:text-rose-300 font-medium" : ""}>
-            {item.required && <span className="text-destructive ml-1">*</span>}
-            {item.title}
-          </span>
-        </label>
-        {/* Show text box when needExtraDose is checked */}
-        {item.key === "needExtraDose" && checked && (
-          <Input
-            type="text"
-            value={allScores?.needExtraDoseDetail || ""}
-            onChange={(e) => onChange("needExtraDoseDetail", e.target.value)}
-            placeholder="نام دارو و دوز اضافی را بنویسید..."
-            disabled={!canEdit}
-            className="min-h-[44px] text-sm"
-            dir="rtl"
-          />
-        )}
-      </div>
+      <label
+        className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all text-sm min-h-[44px] touch-manipulation ${
+          checked ? "border-rose-500/40 bg-rose-500/5" : "border-border hover:bg-accent"
+        } ${!canEdit ? "opacity-70 cursor-not-allowed" : ""}`}
+        dir="rtl"
+      >
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          disabled={!canEdit}
+          className="w-5 h-5 accent-rose-500 shrink-0"
+        />
+        <span className={checked ? "text-rose-700 dark:text-rose-300 font-medium" : ""}>
+          {item.required && <span className="text-destructive ml-1">*</span>}
+          {item.title}
+        </span>
+      </label>
     );
   }
 

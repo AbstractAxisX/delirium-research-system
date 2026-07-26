@@ -25,9 +25,22 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    // Case-insensitive username lookup
     const user = await db.user.findFirst({
-      where: { OR: [{ username }, { phone: username }] },
+      where: {
+        OR: [
+          { username: { contains: username } },
+          { phone: username },
+        ],
+      },
     });
+    // Verify exact match (since SQLite contains is case-insensitive)
+    if (user && user.username !== username && user.phone !== username) {
+      return NextResponse.json(
+        { error: "کاربر یافت نشد یا غیرفعال است" },
+        { status: 401 }
+      );
+    }
     if (!user || !user.active) {
       return NextResponse.json(
         { error: "کاربر یافت نشد یا غیرفعال است" },
@@ -46,7 +59,7 @@ export async function POST(req: NextRequest) {
       username: user.username,
       fullName: user.fullName,
       role: user.role as "ADMIN" | "DOCTOR",
-      pagePermissions: user.role === "ADMIN" ? undefined : user.pagePermissions.split(",").filter(Boolean),
+      pagePermissions: user.role === "ADMIN" ? undefined : (user.pagePermissions || "").split(",").filter(Boolean),
     };
     await setSessionCookie(sessionUser);
     await db.auditLog.create({

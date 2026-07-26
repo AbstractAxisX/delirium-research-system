@@ -37,17 +37,11 @@ export function computeFollowUpStatus(
   baselineAt: Date | string | null | undefined,
   h24At: Date | string | null | undefined,
   h48At: Date | string | null | undefined,
-  now: Date = new Date(),
-  // Optional: check if MDAS answers actually exist (not just empty record)
-  h24HasMdas?: boolean,
-  h48HasMdas?: boolean,
+  now: Date = new Date()
 ): FollowUpInfo {
   const baseT = baselineAt ? new Date(baselineAt) : null;
-  // A timepoint is "filled" only if it has a date AND has MDAS answers
-  const h24Done = h24At && h24HasMdas !== false ? true : false;
-  const h48Done = h48At && h48HasMdas !== false ? true : false;
-  const h24T = h24Done ? new Date(h24At!) : null;
-  const h48T = h48Done ? new Date(h48At!) : null;
+  const h24T = h24At ? new Date(h24At) : null;
+  const h48T = h48At ? new Date(h48At) : null;
 
   if (!baseT) {
     return {

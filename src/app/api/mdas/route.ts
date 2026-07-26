@@ -27,24 +27,27 @@ export async function POST(req: NextRequest) {
     });
 
     if (existing && existing.locked && !isAdmin) {
-      return NextResponse.json({ error: "این فرم ثبت نهایی شده. برای ویرایش با مدیر تماس بگیرید.", locked: true }, { status: 403 });
+      return NextResponse.json({ error: "این فرم قفل شده است. برای ویرایش با مدیر سامانه تماس بگیرید.", locked: true }, { status: 403 });
     }
 
-    // NOTE: Auto-lock after 60s REMOVED — doctors can edit freely until they click "submit"
+    if (existing && existing.lastSavedAt && !isAdmin && !submit) {
+      const elapsed = Date.now() - existing.lastSavedAt.getTime();
+      if (elapsed > AUTO_LOCK_MS) {
+        await db.mdasScore.update({
+          where: { id: existing.id },
+          data: { locked: true, lockedAt: new Date() },
+        });
+        return NextResponse.json({ error: "زمان ویرایش به پایان رسیده است (۶۰ ثانیه). فرم قفل شد.", locked: true }, { status: 403 });
+      }
+    }
 
     // Collect answers - support both new {answers: {itemId: v}} and legacy q1..q10
-    const answersMap: Record<string, any> = {};
+    const answersMap: Record<string, number> = {};
     if (body.answers && typeof body.answers === "object") {
       for (const [k, v] of Object.entries(body.answers)) {
-        // Accept numbers, strings, and booleans
-        if (typeof v === "number") answersMap[k] = v;
-        else if (typeof v === "string") {
-          // Try to convert to number (for MDAS)
-          const numVal = Number(v);
-          if (!Number.isNaN(numVal) && v !== "") answersMap[k] = numVal;
-          else answersMap[k] = v; // Keep as string (YES/NO etc.)
-        }
-        else if (typeof v === "boolean") answersMap[k] = v;
+        // Accept both number and string values (convert string to number)
+        const numVal = typeof v === "number" ? v : (typeof v === "string" ? Number(v) : NaN);
+        if (!Number.isNaN(numVal)) answersMap[k] = numVal;
       }
     }
     // Legacy: also store q1..q10 if present
@@ -60,17 +63,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Compute total from MDAS answers only (q1-q10, numbers only)
-    let total: number | null = null;
-    let mdasSum = 0;
-    let anyMdas = false;
-    for (const k of ["q1","q2","q3","q4","q5","q6","q7","q8","q9","q10"]) {
-      if (k in answersMap && typeof answersMap[k] === "number") {
-        mdasSum += answersMap[k];
-        anyMdas = true;
-      }
-    }
-    if (anyMdas) total = mdasSum;
+    // Compute total from all answers
+    const total = Object.keys(answersMap).length > 0
+      ? computeTotalFromAnswers(answersMap)
+      : (Object.keys(legacyScores).length > 0 ? computeMdasTotal(legacyScores) : null);
 
     const now = new Date();
     const firstSaveAt = existing?.createdAt ?? now;
@@ -102,9 +98,10 @@ export async function POST(req: NextRequest) {
     };
     // Sync q1..q10 from answersMap so legacy fields stay correct per timepoint
     for (const k of ["q1","q2","q3","q4","q5","q6","q7","q8","q9","q10"]) {
-      if (k in answersMap && typeof answersMap[k] === "number") {
+      if (k in answersMap) {
         data[k] = answersMap[k];
       } else if (existing) {
+        // If answer was removed (not in new answers), clear it
         data[k] = null;
       }
     }
